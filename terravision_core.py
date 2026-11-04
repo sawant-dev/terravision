@@ -99,3 +99,54 @@ def verdict(score):
     if score >= 50:
         return "FAIR - possible, check costs carefully"
     return "POOR - not recommended"
+
+
+
+# ===================== LAND USE (what's on the ground) =====================
+
+RADIUS_M = 250      # look at everything within 250 m of the point
+
+
+def get_land_use(lat, lon):
+    """Count buildings, towns, water, forest and farmland near the point,
+    using OpenStreetMap (free map of the world, via the Overpass API)."""
+    around = f"(around:{RADIUS_M},{lat},{lon})"
+    query = f"""
+    [out:json][timeout:25];
+    way["building"]{around};
+    out count;
+    nwr["landuse"~"^(residential|commercial|industrial|retail)$"]{around};
+    out count;
+    nwr["natural"="water"]{around};
+    out count;
+    (nwr["landuse"="forest"]{around}; nwr["natural"="wood"]{around};);
+    out count;
+    nwr["landuse"~"^(farmland|meadow|grass)$"]{around};
+    out count;
+    """
+    url = "https://overpass-api.de/api/interpreter"
+    headers = {"User-Agent": "TerraVision/0.1 (solar site assessment)"}
+    response = requests.post(url, data={"data": query}, headers=headers, timeout=60)
+    response.raise_for_status()
+    elements = response.json()["elements"]
+
+    names = ["buildings", "urban", "water", "forest", "farmland"]
+    counts = {}
+    for name, element in zip(names, elements):
+        counts[name] = int(element["tags"]["total"])
+    return counts
+
+
+def classify_land(counts):
+    """Turn the counts into a land type, a score out of 100, and buildable yes/no."""
+    if counts["buildings"] >= 30 or counts["urban"] > 0:
+        return "Built-up area (town/city)", 0, False
+    if counts["water"] > 0:
+        return "Water body nearby", 50, True
+    if counts["forest"] > 0:
+        return "Forest / trees nearby", 40, True
+    if counts["buildings"] >= 10:
+        return "Village / scattered buildings", 60, True
+    if counts["farmland"] > 0:
+        return "Farmland / open land", 100, True
+    return "Open land (not mapped in detail)", 85, True

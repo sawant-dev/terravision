@@ -10,7 +10,8 @@ import streamlit as st
 
 from terravision_core import (MONTHS, PERFORMANCE_RATIO, get_sunlight,
                               get_elevations, calc_slope, sunlight_score,
-                              land_score, verdict)
+                              land_score, verdict, get_land_use, classify_land,
+                              RADIUS_M)
 
 # ---- 1. Page setup ----
 st.set_page_config(page_title="TerraVision", page_icon="🛰️")
@@ -33,14 +34,15 @@ lon = col2.number_input("Longitude", value=77.28, min_value=-180.0,
 def fetch_data(lat, lon):
     elev = get_elevations(lat, lon)
     sun, temp = get_sunlight(lat, lon)
-    return elev, sun, temp
+    land_use = get_land_use(lat, lon)
+    return elev, sun, temp, land_use
 
 
 # ---- 4. When the button is clicked, build the report ----
 if st.button("Analyse site", type="primary"):
     try:
         with st.spinner("Fetching satellite data..."):
-            elev, sun, temp = fetch_data(lat, lon)
+            elev, sun, temp, land_use = fetch_data(lat, lon)
     except requests.RequestException:
         st.error("Couldn't reach the data service. Wait a few seconds and try again.")
         st.stop()
@@ -55,20 +57,27 @@ if st.button("Analyse site", type="primary"):
     slope, aspect, facing = calc_slope(elev)
     sun_pts = sunlight_score(annual_sun)
     land_pts = land_score(slope, facing)
-    overall = 0.6 * sun_pts + 0.4 * land_pts
+    land_type, use_pts, buildable = classify_land(land_use)
+    overall = 0.5 * sun_pts + 0.3 * land_pts + 0.2 * use_pts
+    if not buildable:
+        overall = min(overall, 30)     # can't build a solar farm on a city
 
     # --- map ---
     st.map(pd.DataFrame({"lat": [lat], "lon": [lon]}), zoom=11)
 
     # --- scores ---
     st.header(f"Report: {site_name}")
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Overall score", f"{overall:.0f} / 100")
-    c2.metric("Sunlight score", f"{sun_pts:.0f}")
-    c3.metric("Land score", f"{land_pts:.0f}")
+    c2.metric("Sunlight", f"{sun_pts:.0f}")
+    c3.metric("Slope", f"{land_pts:.0f}")
+    c4.metric("Land use", f"{use_pts:.0f}")
 
     message = f"**Verdict: {verdict(overall)}**"
-    if overall >= 65:
+    if not buildable:
+        st.error(f"**Verdict: NOT SUITABLE - {land_type.lower()}, "
+                 "a solar farm can't be built here**")
+    elif overall >= 65:
         st.success(message)
     elif overall >= 50:
         st.warning(message)
@@ -102,5 +111,14 @@ if st.button("Analyse site", type="primary"):
     l2.metric("Slope", f"{slope:.1f}°")
     l3.metric("Faces", facing)
 
-    st.caption("Data: NASA POWER (sunlight), NASA SRTM 30 m via OpenTopoData (elevation). "
+    st.subheader("🏘️ Land use")
+    st.write(f"**{land_type}** (within {RADIUS_M} m)")
+    u1, u2, u3, u4 = st.columns(4)
+    u1.metric("Buildings", land_use["buildings"])
+    u2.metric("Water", land_use["water"])
+    u3.metric("Forest", land_use["forest"])
+    u4.metric("Farmland", land_use["farmland"])
+
+    st.caption("Data: NASA POWER (sunlight), NASA SRTM 30 m via OpenTopoData (elevation), "
+               "© OpenStreetMap contributors (land use). "
                "Estimates only — confirm with an on-site survey before investing.")
