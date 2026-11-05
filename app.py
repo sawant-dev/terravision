@@ -12,6 +12,7 @@ from terravision_core import (MONTHS, PERFORMANCE_RATIO, get_sunlight,
                               get_elevations, calc_slope, sunlight_score,
                               land_score, verdict, get_land_use, classify_land,
                               RADIUS_M)
+from terravision_pdf import build_pdf
 
 # ---- 1. Page setup ----
 st.set_page_config(page_title="TerraVision", page_icon="🛰️")
@@ -73,16 +74,36 @@ if st.button("Analyse site", type="primary"):
     c3.metric("Slope", f"{land_pts:.0f}")
     c4.metric("Land use", f"{use_pts:.0f}")
 
-    message = f"**Verdict: {verdict(overall)}**"
-    if not buildable:
-        st.error(f"**Verdict: NOT SUITABLE - {land_type.lower()}, "
-                 "a solar farm can't be built here**")
+    if buildable:
+        verdict_text = verdict(overall)
+    else:
+        verdict_text = (f"NOT SUITABLE - {land_type.lower()}, "
+                        "a solar farm can't be built here")
+
+    message = f"**Verdict: {verdict_text}**"
+    if not buildable or overall < 50:
+        st.error(message)
     elif overall >= 65:
         st.success(message)
-    elif overall >= 50:
-        st.warning(message)
     else:
-        st.error(message)
+        st.warning(message)
+
+    # --- PDF report download ---
+    report = {
+        "site_name": site_name, "lat": lat, "lon": lon,
+        "overall": overall, "buildable": buildable, "verdict": verdict_text,
+        "sun_pts": sun_pts, "land_pts": land_pts, "use_pts": use_pts,
+        "sun": sun, "annual_sun": annual_sun, "yield_per_kwp": yield_per_kwp,
+        "avg_temp": temp["ANN"],
+        "best": max(MONTHS, key=lambda m: sun[m]),
+        "worst": min(MONTHS, key=lambda m: sun[m]),
+        "height": elev["centre"], "slope": slope, "facing": facing,
+        "land_type": land_type, "radius": RADIUS_M, "land_use": land_use,
+    }
+    file_name = f"TerraVision_{site_name.replace(' ', '_')}.pdf"
+    st.download_button("📄 Download PDF report", data=build_pdf(report),
+                       file_name=file_name, mime="application/pdf",
+                       on_click="ignore")
 
     # --- sunlight section ---
     st.subheader("☀️ Sunlight")
